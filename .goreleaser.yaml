@@ -14,48 +14,70 @@
 
 version: 2
 
+# lecjy 构建前执行的钩子
 before:
   hooks:
     - go mod tidy
+    # 执行所有代码生成
     - go generate ./...
 builds:
   - id: livekit
     env:
+      # 禁用 CGO，实现静态编译，确保二进制可移植性
       - CGO_ENABLED=0
+    # 主程序入口文件路径
     main: ./cmd/server
+    # 输出的二进制文件名
     binary: livekit-server
+    # ARM 版本配置（针对树莓派等设备）
     goarm:
+      # 支持 ARMv7 架构
       - "7"
+    # 目标 CPU 架构
     goarch:
       - amd64
       - arm64
       - arm
+    # 目标操作系统
     goos:
       - linux
       - windows
-
+# 打包配置
 archives:
+  # 格式覆盖规则
   - format_overrides:
+      # 对于 Windows 系统
       - goos: windows
+        # 使用 zip 格式打包
         format: zip
+    # 需要包含在压缩包中的额外文件
     files:
       - LICENSE
+# GitHub 发布配置
 release:
   github:
-    owner: livekit
-    name: livekit
-  draft: true
-  prerelease: auto
+    owner: livekit           # GitHub 仓库所有者
+    name: livekit            # GitHub 仓库名称
+  draft: true                 # 创建草稿版本，不自动发布
+  prerelease: auto           # 根据版本号自动判断是否为预发布
+
+# 变更日志配置
 changelog:
-  sort: asc
+  sort: asc                   # 按升序排列（旧的在前）
   filters:
-    exclude:
-      - '^docs:'
-      - '^test:'
+    exclude:                  # 排除某些类型的提交
+      - '^docs:'              # 排除文档更新
+      - '^test:'              # 排除测试相关
+
+# Go module 配置
 gomod:
-  proxy: true
-  mod: mod
+  proxy: true                 # 使用 Go module proxy
+  mod: mod                    # 使用当前目录的 go.mod
+
+# 校验和文件配置
 checksum:
-  name_template: 'checksums.txt'
+  name_template: 'checksums.txt'  # 校验和文件名
+
+# 快照版本配置
 snapshot:
-  name_template: "{{ incpatch .Version }}-next"
+  name_template: "{{ incpatch .Version }}-next"  # 快照版本命名规则

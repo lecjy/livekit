@@ -21,14 +21,19 @@ import (
 	"syscall"
 )
 
+// lecjy 将当前进程可以打开的最大文件描述符数量设置为 10000
 func setULimit() error {
 	// raise ulimit on unix
 	var rLimit syscall.Rlimit
+	// lecjy 获取当前进程的文件描述符限制，RLIMIT_NOFILE表示获取文件描述符数量的限制
 	err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)
 	if err != nil {
 		return err
 	}
+	// lecjy 硬限制，最大限制
 	rLimit.Max = 10000
+	// lecjy 软限制，当前限制
 	rLimit.Cur = 10000
+	// lecjy 应用新的限制值
 	return syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rLimit)
 }

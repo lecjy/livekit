@@ -12,319 +12,202 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# main TCP port for RoomService and RTC endpoint
-# for production setups, this port should be placed behind a load balancer with TLS
+# LiveKit服务器的主TCP端口，用于RoomService和RTC端点，在生产环境中，此端口应位于负载均衡器后面并使用TLS加密
 port: 7880
 
-# when redis is set, LiveKit will automatically operate in a fully distributed fashion
-# clients could connect to any node and be routed to the same room
+# 当配置了Redis时，LiveKit将自动以完全分布式模式运行，客户端可以连接到任何节点，并被路由到同一个房间
 redis:
+  # Redis服务器地址
   address: redis.host:6379
   # db: 0
   # username: myuser
   # password: mypassword
-  # To use sentinel remove the address key above and add the following
-  # sentinel_master_name: livekit
+  # sentinel_master_name: livekit   # 如果要使用哨兵模式，请移除上面的address配置并添加以下配置
   # sentinel_addresses:
   # - livekit-redis-node-0.livekit-redis-headless:26379
   # - livekit-redis-node-1.livekit-redis-headless:26379
-  # If you use a different set of credentials for sentinel add
+  # 如果哨兵使用不同的认证凭据，请添加以下配置
   # sentinel_username: user
   # sentinel_password: pass
   #
-  # To use TLS with redis
+  # 为Redis启用TLS
   # tls:
-  #   enabled: true
-  #   # when set to true, LiveKit will not verify the server's certificate, defaults to true
-  #   insecure: false
-  #   server_name: myserver.com
-  #   # file containing trusted root certificates for verification
-  #   ca_cert_file: /path/to/ca.crt
-  #   client_cert_file: /path/to/client.crt
-  #   client_key_file: /path/to/client.key
+  #   enabled: true  # 启用TLS
+  #   insecure: false # 设置为true时，LiveKit将不验证服务器证书，默认为true
+  #   server_name: myserver.com # 服务器名称，用于TLS验证
+  #   ca_cert_file: /path/to/ca.crt # 用于验证的受信任根证书文件
+  #   client_cert_file: /path/to/client.crt# 客户端证书文件
+  #   client_key_file: /path/to/client.key # 客户端密钥文件
   #
-  # To use cluster remove the address key above and add the following
+  # 如果要使用集群模式，请移除上面的address配置并添加以下配置，它将使用上面的password作为集群密码，由于集群模式不支持，db配置将不会被使用
   # cluster_addresses:
   # - livekit-redis-node-0.livekit-redis-headless:6379
   # - livekit-redis-node-1.livekit-redis-headless:6380
-  # And it will use the password key above as cluster password
-  # And the db key will not be used due to cluster mode not support it.
 
-# WebRTC configuration
+# WebRTC配置
 rtc:
-  # UDP ports to use for client traffic.
-  # this port range should be open for inbound traffic on the firewall
+  # 用于客户端流量的UDP端口范围，防火墙必须开放此端口范围的入站流量
   port_range_start: 50000
   port_range_end: 60000
-  # when set, LiveKit enable WebRTC ICE over TCP when UDP isn't available
-  # this port *cannot* be behind load balancer or TLS, and must be exposed on the node
-  # WebRTC transports are encrypted and do not require additional encryption
-  # only 80/443 on public IP are allowed if less than 1024
+  # 当UDP不可用时，LiveKit启用基于TCP的WebRTC ICE，此端口不能位于负载均衡器或TLS后面，必须在节点上直接暴露，WebRTC传输已加密，不需要额外的加密层，如果端口小于1024，则只允许使用公网IP的80/443端口
   tcp_port: 7881
-  # when set to true, attempts to discover the host's public IP via STUN
-  # this is useful for cloud environments such as AWS & Google where hosts have an internal IP
-  # that maps to an external one
+  # 设置为true时，尝试通过STUN发现主机的公网IP，这对于AWS和Google等云环境很有用，主机有内部IP映射到外部IP
   use_external_ip: true
-  # # there are cases where the public IP determined via STUN is not the correct one
-  # # in such cases, use this setting to set the public IP of the node
-  # # use_external_ip takes precedence, for this to take effect, set use_external_ip to false
+  # 在某些情况下，通过STUN确定的公网IP可能不正确，需要手动设置节点的公网IP，use_external_ip优先，要使此设置生效，请将use_external_ip设置为false
   # node_ip: <external-ip-of-node>
-  # # when set, LiveKit will attempt to use a UDP mux so all UDP traffic goes through
-  # # listed port(s). To maximize system performance, we recommend using a range of ports
-  # # greater or equal to the number of vCPUs on the machine.
-  # # port_range_start & end must not be set for this config to take effect
+  # 设置后，LiveKit将尝试使用UDP复用，使所有UDP流量通过指定的端口。为了最大化系统性能，建议使用与机器vCPU数量，相等或更大的端口范围，要使此配置生效，不能设置port_range_start和end
   # udp_port: 7882-7892
-  # # when set to true, server will use a lite ice agent, that will speed up ice connection, but
-  # # might cause connect issue if server running behind NAT.
+  # 设置为true时，服务器将使用轻量级ICE代理，这可以加速ICE连接，但如果服务器运行在NAT后面可能会导致连接问题。
   # use_ice_lite: true
-  # # optional STUN servers for LiveKit clients to use. Clients will be configured to use these STUN servers automatically.
-  # # by default LiveKit clients use Google's public STUN servers
+  # 为LiveKit客户端配置可选的STUN服务器。客户端将自动配置使用这些STUN服务器。默认情况下，LiveKit客户端使用Google的公共STUN服务器
   # stun_servers:
   #   - server1
-  # # optional TURN servers for clients. This isn't necessary if using embedded TURN server (see below).
+  # 为客户端配置可选的TURN服务器。如果使用内置TURN服务器(见下文)，则不需要此配置。
   # turn_servers:
   #   - host: myhost.com
   #     port: 443
-  #     # tls, tcp, or udp
-  #     protocol: tls
-  #     # Shared secret for TURN server authentication
-  #     secret: ""
-  #     ttl: 14400 # seconds
-  #     # Insecure username/password authentication
+  #     protocol: tls # tls、tcp或udp协议
+  #     secret: "" # TURN服务器认证的共享密钥
+  #     ttl: 14400 # 有效期(秒)
+  #     # 不安全的用户名/密码认证
   #     username: ""
   #     credential: ""
-  # # allows LiveKit to monitor congestion when sending streams and automatically
-  # # manage bandwidth utilization to avoid congestion/loss. Enabled by default
+  # 允许LiveKit在发送流时监控拥塞，并自动管理带宽利用以避免拥塞/丢包
   # congestion_control:
-  #   enabled: true
-  #   # in the unlikely event of highly congested networks, SFU may choose to pause some tracks
-  #   # in order to allow others to stream smoothly. You can disable this behavior here
-  #   allow_pause: true
-  # # allows automatic connection fallback to TCP and TURN/TLS (if configured) when UDP has been unstable, default true
-  # allow_tcp_fallback: true
-  # # number of packets to buffer in the SFU for video, defaults to 500
-  # packet_buffer_size_video: 500
-  # # number of packets to buffer in the SFU for audio, defaults to 200
-  # packet_buffer_size_audio: 200
-  # # minimum amount of time between pli/fir rtcp packets being sent to an individual
-  # # producer. Increasing these times can lead to longer black screens when new participants join,
-  # # while reducing them can lead to higher stream bitrate.
+  #   enabled: true # 默认启用
+  #   allow_pause: true # 在网络高度拥塞的极端情况下，SFU可能会暂停某些轨道，以让其他轨道流畅传输。您可以在此禁用此行为
+  # allow_tcp_fallback: true # 当UDP不稳定时，允许自动回退到TCP和TURN/TLS(如果配置了)，默认为true
+  # packet_buffer_size_video: 500 # SFU中视频的缓冲包数量，默认为500
+  # packet_buffer_size_audio: 200 # SFU中音频的缓冲包数量，默认为200
+  # # 向单个生产者发送pli/fir rtcp包的最小间隔时间，增加这些时间可能导致新参与者加入时黑屏时间更长，减少则可能导致流比特率更高
   # pli_throttle:
   #   low_quality: 500ms
   #   mid_quality: 1s
   #   high_quality: 1s
-  # # when set, Livekit will collect loopback candidates, it is useful for some VM have public address mapped to its loopback interface.
-  # enable_loopback_candidate: true
-  # # network interface filter. If the machine has more than one network interface and you'd like it to use or skip specific interfaces
-  # # both inclusion and exclusion filters can be used together. If neither is defined (default), all interfaces on the machine will be used.
-  # # If both of them are set, then only include takes effect.
+  # enable_loopback_candidate: true  # 设置后，Livekit将收集回环候选地址，这对于某些虚拟机将公网地址映射到回环接口的情况很有用
+  # # 网络接口过滤。如果机器有多个网络接口，您希望使用或跳过特定接口可以同时使用包含和排除过滤器。如果两者都未定义(默认)，将使用机器上的所有接口。如果同时设置了包含和排除，则只有包含生效。
   # interfaces:
   #   includes:
   #     - en0
   #   excludes:
   #     - docker0
-  # # ip address filter. If the machine has more than one ip address and you'd like it to use or skip specific ips,
-  # # both inclusion and exclusion CIDR filters can be used together. If neither is defined (default), all ip on the machine will be used.
-  # # If both of them are set, then only include takes effect.
+  # # IP地址过滤。如果机器有多个IP地址，您希望使用或跳过特定IP，可以同时使用包含和排除CIDR过滤器。如果两者都未定义(默认)，将使用机器上的所有IP。如果同时设置了包含和排除，则只有包含生效
   # ips:
   #   includes:
   #     - 10.0.0.0/16
   #   excludes:
   #     - 192.168.1.0/24
-  # # Set to true to enable mDNS name candidate. This should be left disabled for most users.
-  # # when enabled, it will impact performance since each PeerConnection will process the same mDNS message independently
-  # use_mdns: true
-  # # Set to false to disable strict ACKs for peer connections where LiveKit is the dialing side,
-  # # ie. subscriber peer connections. Disabling strict ACKs will prevent clients that do not ACK
-  # # peer connections from getting kicked out of rooms by the monitor. Note that if strict ACKs
-  # # are disabled and clients don't ACK opened peer connections, only reliable, ordered delivery
-  # # will be available.
-  # strict_acks: true
-  # # enable batch write to merge network write system calls to reduce cpu usage. Outgoing packets
-  # # will be queued until length of queue equal to `batch_size` or time elapsed since last write exceeds `max_flush_interval`.
+  # use_mdns: true # 设置为true以启用mDNS名称候选。大多数用户应保持禁用。启用后会影响性能，因为每个PeerConnection将独立处理相同的mDNS消息
+  # strict_acks: true # 设置为false以禁用LiveKit作为拨号方的对等连接的严格ACK，即订阅者对等连接。禁用严格ACK将防止未ACK对等连接的客户端被监视器踢出房间。注意，如果禁用严格ACK且客户端未ACK打开的对等连接，则只有可靠的有序交付可用。
+  # # 启用批量写入以合并网络写入系统调用，减少CPU使用。出站数据包将排队，直到队列长度达到`batch_size`或上次写入后经过的时间超过`max_flush_interval`。
   # batch_io:
   #    batch_size: 128
   #    max_flush_interval: 2ms
-  # # max number of bytes to buffer for data channel. 0 means unlimited.
-  # # when this limit is breached, data messages will be dropped till the buffered amount drops below this limit.
-  # data_channel_max_buffered_amount: 0
+  # data_channel_max_buffered_amount: 0 # 数据通道的最大缓冲字节数。0表示无限制。当超过此限制时，数据消息将被丢弃，直到缓冲量低于此限制
 
-# when enabled, LiveKit will expose prometheus metrics on :6789/metrics
-# prometheus_port: 6789
+# prometheus_port: 6789 # 启用后，LiveKit将在:6789/metrics暴露prometheus指标
 
-# API key / secret pairs.
-# Keys are used for JWT authentication, server APIs would require a keypair in order to generate access tokens
-# and make calls to the server
+# API密钥/密钥对，密钥用于JWT认证，服务器API需要密钥对来生成访问令牌，并对服务器进行调用
 keys:
   key1: secret1
   key2: secret2
-# Logging config
-# logging:
-#   # log level, valid values: debug, info, warn, error
-#   level: info
-#   # log level for pion, default error
-#   pion_level: error
-#   # when set to true, emit json fields
-#   json: false
-#   # for production setups, enables sampling algorithm
-#   # https://github.com/uber-go/zap/blob/master/FAQ.md#why-sample-application-logs
-#   sample: false
 
-# Default room config
-# Each room created will inherit these settings. If rooms are created explicitly with CreateRoom, they will take
-# precedence over defaults
+# 日志配置
+# logging:
+#   level: info # 日志级别，debug、info、warn、error
+#   pion_level: error # pion库的日志级别，默认为error
+#   json: false # 设置为true时，输出JSON格式的日志
+#   sample: false # 对于生产环境，启用采样算法：https://github.com/uber-go/zap/blob/master/FAQ.md#why-sample-application-logs
+
+# 默认房间配置，创建的每个房间都将继承这些设置。如果使用CreateRoom显式创建房间，这些设置将优先于默认值
 # room:
-#   # allow rooms to be automatically created when participants join, defaults to true
-#   # auto_create: false
-#   # number of seconds to keep the room open if no one joins
-#   empty_timeout: 300
-#   # number of seconds to keep the room open after everyone leaves
-#   departure_timeout: 20
-#   # limit number of participants that can be in a room, 0 for no limit
-#   max_participants: 0
-#   # only accept specific codecs for clients publishing to this room
-#   # this is useful to standardize codecs across clients
-#   # other supported codecs are video/h264, video/vp9, video/av1, audio/red
+#   # auto_create: false # 参与者加入时是否自动创建房间，默认为true
+#   empty_timeout: 300 # 无人加入时保持房间打开的秒数
+#   departure_timeout: 20 # 所有人都离开后保持房间打开的秒数
+#   max_participants: 0  # 房间中参与者的数量限制，0表示无限制
+#   # 仅接受客户端发布到此房间的特定编解码器，这有助于标准化客户端间的编解码器，其他支持的编解码器包括video/h264、video/vp9、video/av1、audio/red
 #   enabled_codecs:
 #     - mime: audio/opus
 #     - mime: video/vp8
-#   # allow tracks to be unmuted remotely, defaults to false
-#   # tracks can always be muted from the Room Service APIs
+#   # 允许远程取消静音轨道，默认为false，始终可以通过Room Service API静音轨道
 #   enable_remote_unmute: true
-#   # control playout delay in ms of video track (and associated audio track)
+#   # 控制视频轨道(及关联音频轨道)的播放延迟(毫秒)
 #   playout_delay:
 #     enabled: true
 #     min: 100
 #     max: 2000
-#   # improves A/V sync when playout_delay set to a value larger than 200ms. It will disables transceiver re-use
-#   # so not recommended for rooms with frequent subscription changes
-#   sync_streams: true
+#   sync_streams: true # 当playout_delay设置为大于200ms时改善音视频同步。它将禁用收发器重用，因此不建议用于订阅频繁变化的房间
 
-# Webhooks
-# when configured, LiveKit notifies your URL handler with room events
+# 配置后，LiveKit将通过房间事件通知您的URL处理程序
 # webhook:
-#   # the API key to use in order to sign the message
-#   # this must match one of the keys LiveKit is configured with
-#   api_key: <api_key>
-#   # list of URLs to be notified of room events
-#   urls:
+#   api_key: <api_key> # 用于签署消息的API密钥，必须与LiveKit配置的密钥之一匹配
+#   urls: # 要通知房间事件的URL列表
 #     - https://your-host.com/handler
 
-# Signal Relay
-# since v1.4.0, a more reliable, psrpc based signal relay is available
-# this gives us the ability to reliably proxy messages between a signal server and RTC node
+# 信号中继，自v1.4.0起，提供了基于psrpc的更可靠的信号中继功能，这使我们能够在信号服务器和RTC节点之间可靠地代理消息
 # signal_relay:
-#   # amount of time a message delivery is tried before giving up
-#   retry_timeout: 30s
-#   # minimum amount of time to wait for RTC node to ack,
-#   # retries use exponentially increasing wait on every subsequent try
-#   # with an upper bound of max_retry_interval
-#   min_retry_interval: 500ms
-#   # maximum amount of time to wait for RTC node to ack
-#   max_retry_interval: 5s
-#   # number of messages to buffer before dropping
-#   stream_buffer_size: 1000
+#   retry_timeout: 30s # 消息传递尝试失败前的重试时间
+#   min_retry_interval: 500ms # 等待RTC节点确认的最小时间，重试时每次后续尝试的等待时间呈指数增长，上限为max_retry_interval
+#   max_retry_interval: 5s # 等待RTC节点确认的最大时间
+#   stream_buffer_size: 1000 # 丢弃前缓冲的消息数量
 
-# PSRPC
-# since v1.5.1, a more reliable, psrpc based internal rpc
+# 自v1.5.1起，提供了基于psrpc的更可靠的内部RPC
 # psrpc:
-#   # maximum number of rpc attempts
-#   max_attempts: 3
-#   # initial time to wait for calls to complete
-#   timeout: 500ms
-#   # amount of time added to the timeout after each failure
-#   backoff: 500ms
-#   # number of messages to buffer before dropping
-#   buffer_size: 1000
+#   max_attempts: 3 # 最大RPC尝试次数
+#   timeout: 500ms  # 等待调用完成的初始时间
+#   backoff: 500ms  # 每次失败后添加到超时的时间量
+#   buffer_size: 1000 # 丢弃前缓冲的消息数量
 
-# customize audio level sensitivity
+# 自定义音频电平敏感度
 # audio:
-#   # minimum level to be considered active, 0-127, where 0 is loudest
-#   # defaults to 30
-#   active_level: 30
-#   # percentile to measure, a participant is considered active if it has exceeded the
-#   # ActiveLevel more than MinPercentile% of the time
-#   # defaults to 40
-#   min_percentile: 40
-#   # frequency in ms to notify changes to clients, defaults to 500
-#   update_interval: 500
-#   # to prevent speaker updates from too jumpy, smooth out values over N samples
-#   smooth_intervals: 4
-#   # enable red encoding downtrack for opus only audio up track
-#   active_red_encoding: true
+#   active_level: 30 # 被视为活动的最小电平，0-127，0为最大声，默认为30
+#   min_percentile: 40 # 测量的百分位数，如果参与者在超过MinPercentile%的时间内超过ActiveLevel，则被视为活动，默认为40
+#   update_interval: 500 # 通知客户端变化的频率(毫秒)，默认为500
+#   smooth_intervals: 4 # 防止发言者更新过于跳跃，对N个样本进行平滑处理
+#   active_red_encoding: true # 为纯opus音频上行轨道启用下行red编码
 
-# turn server
+# TURN服务器配置
 # turn:
-#   # Uses TLS. Requires cert and key pem files by either:
-#   # - using turn.secretName if deploying with our helm chart, or
-#   # - setting LIVEKIT_TURN_CERT and LIVEKIT_TURN_KEY env vars with file locations, or
-#   # - using cert_file and key_file below
-#   # defaults to false
-#   enabled: false
-#   # defaults to 3478 - recommended to 443 if not running HTTP3/QUIC server
-#   # only 53/80/443 are allowed if less than 1024
-#   udp_port: 3478
-#   # defaults to 5349 - if not using a load balancer, this must be set to 443
-#   tls_port: 5349
-#   # set UDP port range for TURN relay to connect to LiveKit SFU, by default it uses a any available port
-#   relay_range_start: 1024
+#   # 使用TLS。需要证书和密钥pem文件，可通过以下方式提供：
+#   # - 如果使用helm图表部署，使用turn.secretName，或
+#   # - 设置LIVEKIT_TURN_CERT和LIVEKIT_TURN_KEY环境变量指向文件位置，或
+#   # - 使用下面的cert_file和key_file
+#   enabled: false # 默认为false
+#   udp_port: 3478 # 默认为3478 - 如果不运行HTTP3/QUIC服务器，建议设为443，如果端口小于1024，只允许53/80/443
+#   tls_port: 5349 # 默认为5349 - 如果不使用负载均衡器，必须设置为443
+#   relay_range_start: 1024 # 设置TURN中继连接到LiveKit SFU的UDP端口范围，默认使用任何可用端口
 #   relay_range_end: 30000
-#   # set external_tls to true if using a L4 load balancer to terminate TLS. when enabled,
-#   # LiveKit expects unencrypted traffic on tls_port, and still advertise tls_port as a TURN/TLS candidate.
-#   external_tls: true
-#   # needs to match tls cert domain
-#   domain: turn.myhost.com
-#   # optional (set only if not using external TLS termination)
+#   external_tls: true # 如果使用L4负载均衡器终止TLS，请将external_tls设置为true。启用后，LiveKit在tls_port上期望未加密的流量，但仍将tls_port广告为TURN/TLS候选
+#   domain: turn.myhost.com  # 需要与tls证书域匹配
+#   # 可选(仅当不使用外部TLS终止时设置)
 #   # cert_file: /path/to/cert.pem
 #   # key_file: /path/to/key.pem
 
-# ingress server
+# 入口服务器配置
 # ingress:
-#   # Prefix used to generate RTMP URLs for RTMP ingress.
-#   rtmp_base_url: "rtmp://my.domain.com/live"
-#   # Prefix used to generate WHIP URLs for WHIP ingress.
-#   whip_base_url: "http://my.domain.com/whip"
+#   rtmp_base_url: "rtmp://my.domain.com/live"  # 用于生成RTMP入口的RTMP URL前缀
+#   whip_base_url: "http://my.domain.com/whip" # 用于生成WHIP入口的WHIP URL前缀
 
-# Region of the current node. Required if using regionaware node selector
-# region: us-west-2
+# region: us-west-2 # 当前节点的区域。如果使用区域感知节点选择器，则需要此配置
 
-# # node selector
+# # 节点选择器配置
 # node_selector:
-#   # default: any. valid values: any, sysload, cpuload, regionaware
-#   kind: sysload
-#   # priority used for selection of node when multiple are available
-#   # default: random. valid values: random, sysload, cpuload, rooms, clients, tracks, bytespersec
-#   sort_by: sysload
-#   # algorithm used to govern selecting from sorted nodes
-#   # default: lowest. valid values: lowest, twochoice
-#   algorithm: lowest
-#   # used in sysload and regionaware
-#   # do not assign room to node if load per CPU exceeds sysload_limit
-#   sysload_limit: 0.7
-#   # used in regionaware
-#   # list of regions and their lat/lon coordinates
-#   regions:
+#   kind: sysload # 默认：any。有效值：any、sysload、cpuload、regionaware
+#   sort_by: sysload # 当有多个节点可用时，选择节点的优先级，默认：random。有效值：random、sysload、cpuload、rooms、clients、tracks、bytespersec
+#   algorithm: lowest # 用于从排序节点中选择的算法，默认：lowest。有效值：lowest、twochoice
+#   sysload_limit: 0.7 # 用于sysload和regionaware模式，如果每CPU负载超过sysload_limit，则不将房间分配给节点
+#   regions:  # 用于regionaware模式，区域列表及其经纬度坐标
 #     - name: us-west-2
 #       lat: 44.19434095976287
 #       lon: -123.0674908379146
 
-# # node limits
-# # set to -1 to disable a limit
+# # 节点限制配置，设置为-1以禁用限制
 # limit:
-#   # defaults to 400 tracks in & out per CPU, up to 8000
-#   num_tracks: -1
-#   # defaults to 1 GB/s, or just under 10 Gbps
-#   bytes_per_sec: 1_000_000_000
-#   # how many tracks (audio / video) that a single participant can subscribe at same time.
-#   # if the limit is exceeded, subscriptions will be pending until any subscribed track has been unsubscribed.
-#   # value less or equal than 0 means no limit.
-#   subscription_limit_video: 0
+#   num_tracks: -1 # 默认为每CPU 400个进出轨道，最多8000个
+#   bytes_per_sec: 1_000_000_000 # 默认为1 GB/s，或略低于10 Gbps
+#   subscription_limit_video: 0 # 单个参与者可以同时订阅的轨道数量(音频/视频)，如果超过限制，订阅将处于待处理状态，直到任何已订阅的轨道被取消订阅，小于或等于0的值表示无限制
 #   subscription_limit_audio: 0
-#   # limit size of room and participant's metadata, 0 for no limit
-#   max_metadata_size: 0
-#   # limit size of participant attributes, 0 for no limit
-#   max_attributes_size: 0
-#   # limit length of room names
-#   max_room_name_length: 0
-#   # limit length of participant identity
-#   max_participant_identity_length: 0
+#   max_metadata_size: 0 # 房间和参与者元数据的大小限制，0表示无限制
+#   max_attributes_size: 0 # 参与者属性的大小限制，0表示无限制
+#   max_room_name_length: 0 # 房间名称的长度限制
+#   max_participant_identity_length: 0 # 参与者身份标识的长度限制
