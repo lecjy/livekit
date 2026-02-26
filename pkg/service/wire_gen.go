@@ -35,176 +35,308 @@ import (
 
 // Injectors from wire.go:
 
+// InitializeServer 是整个LiveKit服务器的初始化函数，负责创建和组装所有必要的组件，在main.go中调用
 func InitializeServer(conf *config.Config, currentNode routing.LocalNode) (*LivekitServer, error) {
+	// 从配置中获取限流相关的配置参数，用于控制资源使用（如最大参与者数、最大轨道数等）
 	limitConfig := getLimitConf(conf)
+
+	// 获取默认的API配置（超时、重试等参数），用于API请求的行为控制
 	apiConfig := config.DefaultAPIConfig()
+
+	// 根据配置创建Redis客户端（如果配置了Redis的话），用于分布式模式下的状态存储和节点间通信
 	universalClient, err := createRedisClient(conf)
 	if err != nil {
 		return nil, err
 	}
+
+	// 从当前节点信息中获取节点ID，用于在集群中唯一标识该节点
 	nodeID := getNodeID(currentNode)
+
+	// 创建或获取消息总线（如果配置了Redis则使用Redis消息总线，否则使用本地内存总线），消息总线提供发布/订阅机制，用于节点间通信
 	messageBus := getMessageBus(universalClient)
+
+	// 获取信令中继的配置参数（超时、重试等），用于配置信令客户端的重传机制
 	signalRelayConfig := getSignalRelayConfig(conf)
+
+	// 创建信令客户端，用于节点间的信令通信（如SDP Offer/Answer转发）
 	signalClient, err := routing.NewSignalClient(nodeID, messageBus, signalRelayConfig)
 	if err != nil {
 		return nil, err
 	}
+
+	// 获取PSRPC（Pub/Sub RPC）配置（池大小、超时等），用于配置基于发布/订阅的RPC系统
 	psrpcConfig := getPSRPCConfig(conf)
+
+	// 创建PSRPC客户端参数，包含日志、监控等中间件，封装所有PSRPC客户端需要的配置
 	clientParams := getPSRPCClientParams(psrpcConfig, messageBus)
+
+	// 获取房间配置（空置超时、自动创建等），用于配置房间管理器的行为
 	roomConfig := getRoomConfig(conf)
+
+	// 创建房间管理器客户端，用于跨节点的房间管理RPC调用
 	roomManagerClient, err := routing.NewRoomManagerClient(clientParams, roomConfig)
 	if err != nil {
 		return nil, err
 	}
+
+	// 创建保活机制的PubSub，用于节点间的心跳检测，让其他节点知道该节点还活着
 	keepalivePubSub, err := rpc.NewKeepalivePubSub(clientParams)
 	if err != nil {
 		return nil, err
 	}
+
+	// 获取节点统计配置（上报间隔、告警阈值等），用于配置节点资源监控
 	nodeStatsConfig := getNodeStatsConfig(conf)
+
+	// 创建路由器（根据配置可能是本地路由或Redis路由），负责请求路由、负载均衡和节点发现
 	router := routing.CreateRouter(universalClient, currentNode, signalClient, roomManagerClient, keepalivePubSub, nodeStatsConfig)
+
+	// 创建对象存储（如果配置了Redis则使用Redis存储，否则使用本地内存存储），用于持久化房间、参与者等元数据
 	objectStore := createStore(universalClient)
+
+	// 创建房间分配器，负责为新房间选择合适的节点（基于负载、区域等）
 	roomAllocator, err := NewRoomAllocator(conf, router, objectStore)
 	if err != nil {
 		return nil, err
 	}
+
+	// 创建Egress客户端，用于调用录制/流媒体服务（如录制房间、推流到RTMP等）
 	egressClient, err := rpc.NewEgressClient(clientParams)
 	if err != nil {
 		return nil, err
 	}
+
+	// 获取Egress专用的存储接口（只有Redis存储支持Egress），用于存储录制任务的元数据：
+	// - 正在进行的录制任务列表
+	// - 已完成录制的文件路径
+	// - 录制任务的配置和状态
 	egressStore := getEgressStore(objectStore)
+
+	// 获取Ingress专用的存储接口，用于存储推流接入任务的元数据（RTMP流信息、状态等）
 	ingressStore := getIngressStore(objectStore)
+
+	// 获取SIP专用的存储接口，用于存储SIP通话的元数据（通话状态、房间映射关系等）
 	sipStore := getSIPStore(objectStore)
+
+	// 创建密钥提供者，用于API密钥的管理和验证，验证API请求的签名，生成访问令牌
 	keyProvider, err := createKeyProvider(conf)
 	if err != nil {
 		return nil, err
 	}
+
+	// 创建Webhook通知器，用于异步发送房间事件（参与者加入/离开、录制完成等）到配置的URL
 	queuedNotifier, err := createWebhookNotifier(conf, keyProvider)
 	if err != nil {
 		return nil, err
 	}
+
+	// 创建分析服务，用于收集和分析服务器运行指标（CPU使用率、参与者数量等）
 	analyticsService := telemetry.NewAnalyticsService(conf, currentNode)
+
+	// 创建遥测服务，整合Webhook通知和分析数据，提供统一的监控和事件上报接口
 	telemetryService := telemetry.NewTelemetryService(queuedNotifier, analyticsService)
+
+	// 创建IO信息服务，管理Egress/Ingress/SIP任务的元数据，协调这些任务的执行状态
 	ioInfoService, err := NewIOInfoService(messageBus, egressStore, ingressStore, sipStore, telemetryService)
 	if err != nil {
 		return nil, err
 	}
+
+	// 创建Egress启动器，负责实际启动录制任务（如开始录制房间、停止录制等）
 	rtcEgressLauncher := NewEgressLauncher(egressClient, ioInfoService, objectStore)
+
+	// 创建主题格式化器，用于生成RPC主题名称（如房间主题、参与者主题等）
 	topicFormatter := rpc.NewTopicFormatter()
+
+	// 创建房间RPC客户端，用于跨节点的房间操作（如创建房间、删除房间等）
 	roomClient, err := rpc.NewTypedRoomClient(clientParams)
 	if err != nil {
 		return nil, err
 	}
+
+	// 创建参与者RPC客户端，用于跨节点的参与者操作（如踢出参与者、修改权限等）
 	participantClient, err := rpc.NewTypedParticipantClient(clientParams)
 	if err != nil {
 		return nil, err
 	}
+
+	// 创建房间服务，处理房间管理相关的API请求（如CreateRoom、ListRooms、DeleteRoom等）
 	roomService, err := NewRoomService(limitConfig, apiConfig, router, roomAllocator, objectStore, rtcEgressLauncher, topicFormatter, roomClient, participantClient)
 	if err != nil {
 		return nil, err
 	}
+
+	// 创建Agent调度内部客户端，用于Agent的跨节点通信（调度AI Agent到合适的节点）
 	agentDispatchInternalClient, err := rpc.NewTypedAgentDispatchInternalClient(clientParams)
 	if err != nil {
 		return nil, err
 	}
+
+	// 创建Agent调度服务，管理AI Agent的分发和调度（如将Agent分配给特定的房间）
 	agentDispatchService := NewAgentDispatchService(agentDispatchInternalClient, topicFormatter, roomAllocator, router)
+
+	// 创建Egress服务，处理录制相关的API请求（如StartEgress、StopEgress、ListEgress等）
 	egressService := NewEgressService(egressClient, rtcEgressLauncher, ioInfoService, roomService)
+
+	// 获取Ingress配置（最大带宽、支持的协议、RTMP端口等）
 	ingressConfig := getIngressConfig(conf)
+
+	// 创建Ingress客户端，用于调用Ingress服务
 	ingressClient, err := rpc.NewIngressClient(clientParams)
 	if err != nil {
 		return nil, err
 	}
+
+	// 创建Ingress服务，处理推流接入相关的API请求（如RTMP推流、WHIP协议接入等）
 	ingressService := NewIngressService(ingressConfig, nodeID, messageBus, ingressClient, ingressStore, ioInfoService, telemetryService)
+
+	// 获取SIP配置（SIP域名、端口、中继提供商配置等）
 	sipConfig := getSIPConfig(conf)
+
+	// 创建SIP客户端，用于调用SIP服务
 	sipClient, err := rpc.NewSIPClientWithParams(clientParams)
 	if err != nil {
 		return nil, err
 	}
+
+	// 创建SIP服务，处理SIP网关相关的API请求（电话呼入/呼出、通话管理）
 	sipService := NewSIPService(sipConfig, nodeID, messageBus, sipClient, sipStore, roomService, telemetryService)
+
+	// 创建RTC服务，处理WebRTC信令连接（如JoinRoom、PublishTrack、SubscribeTrack等）
 	rtcService := NewRTCService(conf, roomAllocator, router, telemetryService)
+
+	// 创建WHIP参与者客户端，用于WHIP协议的参与者管理
 	whipParticipantClient, err := rpc.NewTypedWHIPParticipantClient(clientParams)
 	if err != nil {
 		return nil, err
 	}
+
+	// 创建WHIP服务，支持WHIP协议的推流接入（WebRTC HTTP Ingestion Protocol）
 	serviceWHIPService, err := NewWHIPService(conf, router, roomAllocator, clientParams, topicFormatter, whipParticipantClient)
 	if err != nil {
 		return nil, err
 	}
+
+	// 创建Agent服务，管理Agent生命周期（启动、停止、健康检查）
 	agentService, err := NewAgentService(conf, currentNode, messageBus, keyProvider)
 	if err != nil {
 		return nil, err
 	}
+
+	// 获取Agent配置（空闲超时、最大并发数等）
 	agentConfig := getAgentConfig(conf)
+
+	// 创建Agent客户端，用于与Agent进行通信
 	client, err := agent.NewAgentClient(messageBus, agentConfig)
 	if err != nil {
 		return nil, err
 	}
+
+	// 获取Agent专用的存储接口，用于存储Agent的元数据（状态、分配的房间等）
 	agentStore := getAgentStore(objectStore)
+
+	// 创建版本生成器，用于乐观并发控制（防止并发修改冲突）
 	timedVersionGenerator := utils.NewDefaultTimedVersionGenerator()
+
+	// 创建TURN认证处理器，处理TURN服务器的认证请求（用于NAT穿透）
 	turnAuthHandler := NewTURNAuthHandler(keyProvider)
+
+	// 创建转发统计收集器（如果配置了的话），用于监控媒体转发质量
 	forwardStats := createForwardStats(conf)
+
+	// 创建本地房间管理器，负责本节点上的房间管理：
+	// - 创建/销毁房间
+	// - 管理参与者
+	// - 处理媒体流
 	roomManager, err := NewLocalRoomManager(conf, objectStore, currentNode, router, roomAllocator, telemetryService, client, agentStore, rtcEgressLauncher, timedVersionGenerator, turnAuthHandler, messageBus, forwardStats)
 	if err != nil {
 		return nil, err
 	}
+
+	// 创建默认的信令服务器，处理WebSocket信令连接（客户端与服务器的信令交互）
 	signalServer, err := NewDefaultSignalServer(currentNode, messageBus, signalRelayConfig, router, roomManager)
 	if err != nil {
 		return nil, err
 	}
+
+	// 获取TURN认证处理器函数，用于TURN服务器的认证回调
 	authHandler := getTURNAuthHandlerFunc(turnAuthHandler)
+
+	// 创建进程内的TURN服务器，用于NAT穿透（帮助客户端建立直接连接）
 	server, err := newInProcessTurnServer(conf, authHandler)
 	if err != nil {
 		return nil, err
 	}
+
+	// 最后，组装所有服务创建最终的LiveKit服务器实例，这个对象包含了所有需要协调的服务，是服务器的核心
 	livekitServer, err := NewLivekitServer(conf, roomService, agentDispatchService, egressService, ingressService, sipService, ioInfoService, rtcService, serviceWHIPService, agentService, keyProvider, router, roomManager, signalServer, server, currentNode)
 	if err != nil {
 		return nil, err
 	}
+
 	return livekitServer, nil
 }
 
+// InitializeRouter 是一个简化的初始化函数，只创建路由器组件
 func InitializeRouter(conf *config.Config, currentNode routing.LocalNode) (routing.Router, error) {
+	// 创建Redis客户端
 	universalClient, err := createRedisClient(conf)
 	if err != nil {
 		return nil, err
 	}
+	// 获取节点ID
 	nodeID := getNodeID(currentNode)
+	// 获取消息总线
 	messageBus := getMessageBus(universalClient)
+	// 获取信令中继配置
 	signalRelayConfig := getSignalRelayConfig(conf)
+	// 创建信令客户端
 	signalClient, err := routing.NewSignalClient(nodeID, messageBus, signalRelayConfig)
 	if err != nil {
 		return nil, err
 	}
+	// 获取PSRPC配置
 	psrpcConfig := getPSRPCConfig(conf)
+	// 创建PSRPC客户端参数
 	clientParams := getPSRPCClientParams(psrpcConfig, messageBus)
+	// 获取房间配置
 	roomConfig := getRoomConfig(conf)
+	// 创建房间管理器客户端
 	roomManagerClient, err := routing.NewRoomManagerClient(clientParams, roomConfig)
 	if err != nil {
 		return nil, err
 	}
+	// 创建保活PubSub
 	keepalivePubSub, err := rpc.NewKeepalivePubSub(clientParams)
 	if err != nil {
 		return nil, err
 	}
+	// 获取节点统计配置
 	nodeStatsConfig := getNodeStatsConfig(conf)
+	// 创建并返回路由器
 	router := routing.CreateRouter(universalClient, currentNode, signalClient, roomManagerClient, keepalivePubSub, nodeStatsConfig)
 	return router, nil
 }
 
 // wire.go:
 
+// getNodeID 从当前节点信息中提取节点ID
 func getNodeID(currentNode routing.LocalNode) livekit.NodeID {
 	return currentNode.NodeID()
 }
 
+// createKeyProvider根据配置创建密钥提供者，支持从文件加载密钥或直接从配置中读取，如果指定了密钥文件，会检查文件权限（必须不允许其他用户访问）
 func createKeyProvider(conf *config.Config) (auth.KeyProvider, error) {
-
+	// 如果配置了密钥文件
 	if conf.KeyFile != "" {
+		// 安全性检查，确保其他用户没有读写执行权限
 		var otherFilter os.FileMode = 0007
 		if st, err := os.Stat(conf.KeyFile); err != nil {
 			return nil, err
 		} else if st.Mode().Perm()&otherFilter != 0000 {
 			return nil, fmt.Errorf("key file others permissions must be set to 0")
 		}
+		// 打开密钥文件
 		f, err := os.Open(conf.KeyFile)
 		if err != nil {
 			return nil, err
@@ -212,30 +344,38 @@ func createKeyProvider(conf *config.Config) (auth.KeyProvider, error) {
 		defer func() {
 			_ = f.Close()
 		}()
+		// 解析YAML格式的密钥文件
 		decoder := yaml.NewDecoder(f)
 		if err = decoder.Decode(conf.Keys); err != nil {
 			return nil, err
 		}
 	}
 
+	// 确保至少有一个密钥可用
 	if len(conf.Keys) == 0 {
 		return nil, errors.New("one of key-file or keys must be provided in order to support a secure installation")
 	}
 
+	// 从密钥映射创建文件型密钥提供者
 	return auth.NewFileBasedKeyProviderFromMap(conf.Keys), nil
 }
 
+// createWebhookNotifier 创建Webhook通知器，用于向配置的URL发送异步的Webhook事件
 func createWebhookNotifier(conf *config.Config, provider auth.KeyProvider) (webhook.QueuedNotifier, error) {
 	wc := conf.WebHook
 
+	// 获取指定API密钥对应的密钥
 	secret := provider.GetSecret(wc.APIKey)
+	// 如果配置了Webhook URL但没有提供API密钥，返回错误
 	if secret == "" && len(wc.URLs) > 0 {
 		return nil, ErrWebHookMissingAPIKey
 	}
 
+	// 创建默认的Webhook通知器
 	return webhook.NewDefaultNotifier(wc, provider)
 }
 
+// createRedisClient根据配置创建Redis客户端，如果Redis未配置，返回nil
 func createRedisClient(conf *config.Config) (redis.UniversalClient, error) {
 	if !conf.Redis.IsConfigured() {
 		return nil, nil
@@ -243,6 +383,7 @@ func createRedisClient(conf *config.Config) (redis.UniversalClient, error) {
 	return redis2.GetRedisClient(&conf.Redis)
 }
 
+// createStore根据是否配置了Redis创建相应的存储实现，Redis配置了则使用Redis存储（分布式），否则使用本地内存存储（单机）
 func createStore(rc redis.UniversalClient) ObjectStore {
 	if rc != nil {
 		return NewRedisStore(rc)
@@ -250,6 +391,7 @@ func createStore(rc redis.UniversalClient) ObjectStore {
 	return NewLocalStore()
 }
 
+// getMessageBus 根据Redis客户端创建消息总线，有Redis则创建Redis消息总线（分布式），否则创建本地消息总线（单机）
 func getMessageBus(rc redis.UniversalClient) psrpc.MessageBus {
 	if rc == nil {
 		return psrpc.NewLocalMessageBus()
@@ -257,6 +399,7 @@ func getMessageBus(rc redis.UniversalClient) psrpc.MessageBus {
 	return psrpc.NewRedisMessageBus(rc)
 }
 
+// getEgressStore 从对象存储中获取Egress存储接口，只有Redis存储支持Egress功能
 func getEgressStore(s ObjectStore) EgressStore {
 	switch store := s.(type) {
 	case *RedisStore:
@@ -266,6 +409,7 @@ func getEgressStore(s ObjectStore) EgressStore {
 	}
 }
 
+// getIngressStore 从对象存储中获取Ingress存储接口，只有Redis存储支持Ingress功能
 func getIngressStore(s ObjectStore) IngressStore {
 	switch store := s.(type) {
 	case *RedisStore:
@@ -275,6 +419,7 @@ func getIngressStore(s ObjectStore) IngressStore {
 	}
 }
 
+// getAgentStore 从对象存储中获取Agent存储接口，Redis存储和本地存储都支持Agent功能
 func getAgentStore(s ObjectStore) AgentStore {
 	switch store := s.(type) {
 	case *RedisStore:
@@ -286,10 +431,12 @@ func getAgentStore(s ObjectStore) AgentStore {
 	}
 }
 
+// getIngressConfig 从主配置中提取Ingress子配置
 func getIngressConfig(conf *config.Config) *config.IngressConfig {
 	return &conf.Ingress
 }
 
+// getSIPStore 从对象存储中获取SIP存储接口，只有Redis存储支持SIP功能
 func getSIPStore(s ObjectStore) SIPStore {
 	switch store := s.(type) {
 	case *RedisStore:
@@ -299,30 +446,37 @@ func getSIPStore(s ObjectStore) SIPStore {
 	}
 }
 
+// getSIPConfig 从主配置中提取SIP子配置
 func getSIPConfig(conf *config.Config) *config.SIPConfig {
 	return &conf.SIP
 }
 
+// getLimitConf 从主配置中提取限流配置
 func getLimitConf(config2 *config.Config) config.LimitConfig {
 	return config2.Limit
 }
 
+// getRoomConfig 从主配置中提取房间配置
 func getRoomConfig(config2 *config.Config) config.RoomConfig {
 	return config2.Room
 }
 
+// getSignalRelayConfig 从主配置中提取信令中继配置
 func getSignalRelayConfig(config2 *config.Config) config.SignalRelayConfig {
 	return config2.SignalRelay
 }
 
+// getPSRPCConfig 从主配置中提取PSRPC配置
 func getPSRPCConfig(config2 *config.Config) rpc.PSRPCConfig {
 	return config2.PSRPC
 }
 
+// getPSRPCClientParams 创建PSRPC客户端参数，配置日志、监控和OpenTelemetry中间件
 func getPSRPCClientParams(config2 rpc.PSRPCConfig, bus psrpc.MessageBus) rpc.ClientParams {
 	return rpc.NewClientParams(config2, bus, logger.GetLogger(), rpc.PSRPCMetricsObserver{}, otelpsrpc.ClientOptions(otelpsrpc.Config{}))
 }
 
+// createForwardStats 创建转发统计收集器，如果配置了统计间隔等参数则创建，否则返回nil
 func createForwardStats(conf *config.Config) *sfu.ForwardStats {
 	if conf.RTC.ForwardStats.SummaryInterval == 0 || conf.RTC.ForwardStats.ReportInterval == 0 || conf.RTC.ForwardStats.ReportWindow == 0 {
 		return nil
@@ -330,14 +484,17 @@ func createForwardStats(conf *config.Config) *sfu.ForwardStats {
 	return sfu.NewForwardStats(conf.RTC.ForwardStats.SummaryInterval, conf.RTC.ForwardStats.ReportInterval, conf.RTC.ForwardStats.ReportWindow)
 }
 
+// newInProcessTurnServer 创建进程内的TURN服务器
 func newInProcessTurnServer(conf *config.Config, authHandler turn.AuthHandler) (*turn.Server, error) {
 	return NewTurnServer(conf, authHandler, false)
 }
 
+// getNodeStatsConfig 从主配置中提取节点统计配置
 func getNodeStatsConfig(config2 *config.Config) config.NodeStatsConfig {
 	return config2.NodeStats
 }
 
+// getAgentConfig 从主配置中提取Agent配置
 func getAgentConfig(config2 *config.Config) agent.Config {
 	return config2.Agents
 }
